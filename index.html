@@ -3,620 +3,624 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Realistic WebFruit Ninja</title>
+    <title>3D Hand-Track Fruit Ninja</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #121212; font-family: sans-serif; user-select: none; }
-        #game-container { position: relative; width: 100vw; height: 100vh; }
-        #video-input { position: absolute; top: 0; left: 0; visibility: hidden; transform: scaleX(-1); }
-        #output-canvas { width: 100%; height: 100%; display: block; }
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        #video-input { position: absolute; top: 0; left: 0; opacity: 0; pointer-events: none; z-index: -1; }
         
-        /* UI Overlay */
-        #ui-layer {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;
-            display: flex; flex-direction: column; justify-content: space-between; padding: 20px; box-sizing: border-box;
-        }
-        .hud-top { display: flex; justify-content: space-between; font-size: 2.5rem; font-weight: 900; text-shadow: 2px 2px 0 #000; }
-        .score { color: #FFD700; }
-        .bombs { color: #FF4444; }
-
-        /* Menu Screens */
-        .screen {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); display: flex; flex-direction: column;
-            align-items: center; justify-content: center; z-index: 10; pointer-events: auto;
-            backdrop-filter: blur(8px); transition: opacity 0.3s;
-        }
-        .hidden { opacity: 0; pointer-events: none; }
+        /* UI Layers */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
         
-        h1 { 
-            font-size: 5rem; margin: 0; color: white; 
-            background: -webkit-linear-gradient(#eee, #999); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-            text-transform: uppercase; letter-spacing: 5px;
-            filter: drop-shadow(0 0 10px rgba(255,255,255,0.5));
-        }
+        /* HUD */
+        .hud-top { display: flex; justify-content: space-between; padding: 20px; font-size: 24px; color: white; text-shadow: 0 2px 4px rgba(0,0,0,0.8); font-weight: bold; }
+        .score-box span { color: #ffd700; }
+        .lives-box span { color: #ff4444; font-size: 30px; }
         
-        button {
-            margin-top: 30px; padding: 15px 50px; font-size: 2rem; border: none; border-radius: 50px;
-            background: linear-gradient(45deg, #ff00cc, #3333ff); color: white; cursor: pointer;
-            font-weight: bold; text-transform: uppercase; box-shadow: 0 0 20px rgba(255, 0, 204, 0.5);
-            transition: transform 0.2s;
-        }
-        button:hover { transform: scale(1.1); }
+        /* Screens */
+        .screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: auto; backdrop-filter: blur(5px); z-index: 10; }
+        .hidden { display: none !important; }
         
-        #loading { color: #00ffcc; font-size: 1.5rem; margin-top: 20px; animation: blink 1s infinite; }
-        @keyframes blink { 50% { opacity: 0.5; } }
+        h1 { color: #fff; font-size: 60px; margin: 0 0 20px 0; text-transform: uppercase; letter-spacing: 5px; text-shadow: 0 0 20px #ff0055; }
+        p { color: #ddd; font-size: 18px; max-width: 600px; text-align: center; line-height: 1.5; }
+        
+        button { margin-top: 30px; padding: 15px 40px; font-size: 24px; background: linear-gradient(45deg, #ff0055, #ff9900); border: none; color: white; border-radius: 50px; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; text-transform: uppercase; font-weight: bold; }
+        button:hover { transform: scale(1.05); box-shadow: 0 0 20px rgba(255, 100, 0, 0.6); }
+        
+        #loading { color: white; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 20px; }
     </style>
+
+    <!-- Dependencies -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
-<div id="game-container">
-    <video id="video-input" playsinline></video>
-    <canvas id="output-canvas"></canvas>
-    
+    <!-- Hidden Video Element for MediaPipe -->
+    <video id="video-input"></video>
+
+    <!-- 3D Canvas Container is handled by Three.js -->
+
+    <!-- Loading Indicator -->
+    <div id="loading">Loading AI Models...</div>
+
+    <!-- UI Layer -->
     <div id="ui-layer">
         <div class="hud-top">
-            <div class="score">SCORE: <span id="score-val">0</span></div>
-            <div class="bombs">💣 <span id="bombs-val">0</span>/3</div>
+            <div class="score-box">Score: <span id="score">0</span></div>
+            <div class="lives-box">Bombs: <span id="lives">❌ ❌ ❌</span></div>
         </div>
     </div>
 
-    <div id="start-screen" class="screen">
-        <h1>Fruit Ninja 3D</h1>
-        <div id="loading">Initializing Vision AI...</div>
-        <button id="btn-start" style="display:none">Start Game</button>
+    <!-- Start Screen -->
+    <div id="start-screen" class="screen hidden">
+        <h1>Cyber Slice 3D</h1>
+        <p>Use your hand to slice fruits. Avoid the bombs!<br>Slice 3 bombs and it's Game Over.</p>
+        <p style="font-size: 14px; color: #aaa; margin-top:10px;">Ensure good lighting. Show your index finger clearly.</p>
+        <button id="btn-start">Start Game</button>
     </div>
 
-    <div id="game-over-screen" class="screen hidden">
-        <h1 style="color: #ff4444">Game Over</h1>
-        <h2 style="color: white; font-size: 3rem;">Score: <span id="final-score">0</span></h2>
-        <button id="btn-restart">Play Again</button>
+    <!-- Game Over Screen -->
+    <div id="gameover-screen" class="screen hidden">
+        <h1 style="color: #ff4444; text-shadow: 0 0 20px #ff0000;">Game Over</h1>
+        <p>Final Score: <span id="final-score" style="color:#ffd700; font-size: 30px; font-weight:bold;">0</span></p>
+        <button id="btn-restart">Try Again</button>
     </div>
-</div>
 
-<!-- External Libs -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-<script type="importmap">
-  { "imports": { "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js" } }
-</script>
-
-<script type="module">
-    import * as THREE from 'three';
-
-    // --- Configuration ---
-    const CONFIG = {
-        gravity: 0.008,      // Low gravity for "floaty" feel
-        spawnRate: 45,       // Frames between spawns
-        zPlane: -8,          // Depth of gameplay
-        handZ: -8,           // Depth of hand cutter
-        swipeThreshold: 0.3, // Min velocity to cut
-        fruitRadius: 1.3
-    };
-
-    const STATE = {
-        score: 0,
-        bombsHit: 0,
-        isPlaying: false,
-        handPos: new THREE.Vector3(0, -10, CONFIG.handZ),
-        prevHandPos: new THREE.Vector3(0, -10, CONFIG.handZ),
-        handVelocity: new THREE.Vector3()
-    };
-
-    // --- Assets / Procedural Textures ---
-    const textureLoader = new THREE.TextureLoader();
-    
-    // Helper to create stripe texture for watermelon
-    function createStripeTexture() {
-        const canvas = document.createElement('canvas');
-        canvas.width = 128; canvas.height = 128;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#2d5a27'; // Dark green
-        ctx.fillRect(0, 0, 128, 128);
-        ctx.fillStyle = '#90ee90'; // Light green
-        for(let i=0; i<128; i+=16) {
-            ctx.beginPath();
-            ctx.moveTo(i, 0);
-            ctx.lineTo(i+10, 128); // Zigzag ish
-            ctx.lineTo(i-5, 128);
-            ctx.lineTo(i-15, 0);
-            ctx.fill();
-        }
-        return new THREE.CanvasTexture(canvas);
+<script>
+/**
+ * CONFIGURATION & STATE
+ */
+const CONFIG = {
+    cameraZ: 10,
+    planeZ: 0,
+    spawnInterval: 1000, // ms
+    gravity: -9.8,
+    colors: {
+        trail: 0x00ffff,
+        bomb: 0x111111,
+        smoke: 0x555555
     }
-    const watermelonTex = createStripeTexture();
+};
 
-    // --- Sound System ---
-    const AudioSys = {
-        ctx: null,
-        init: () => {
-            window.AudioContext = window.AudioContext || window.webkitAudioContext;
-            AudioSys.ctx = new AudioContext();
-        },
-        playTone: (type, freq, dur, vol) => {
-            if (!AudioSys.ctx) return;
-            const osc = AudioSys.ctx.createOscillator();
-            const gain = AudioSys.ctx.createGain();
-            osc.type = type;
-            osc.frequency.setValueAtTime(freq, AudioSys.ctx.currentTime);
-            gain.gain.setValueAtTime(vol, AudioSys.ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, AudioSys.ctx.currentTime + dur);
-            osc.connect(gain);
-            gain.connect(AudioSys.ctx.destination);
-            osc.start();
-            osc.stop(AudioSys.ctx.currentTime + dur);
-        },
-        playNoise: () => {
-            if (!AudioSys.ctx) return;
-            const bufferSize = AudioSys.ctx.sampleRate * 0.5;
-            const buffer = AudioSys.ctx.createBuffer(1, bufferSize, AudioSys.ctx.sampleRate);
-            const data = buffer.getChannelData(0);
-            for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-            const noise = AudioSys.ctx.createBufferSource();
-            noise.buffer = buffer;
-            const gain = AudioSys.ctx.createGain();
-            gain.gain.setValueAtTime(0.5, AudioSys.ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.01, AudioSys.ctx.currentTime + 0.5);
-            noise.connect(gain);
-            gain.connect(AudioSys.ctx.destination);
-            noise.start();
-        },
-        slice: () => AudioSys.playTone('sawtooth', 600 + Math.random()*200, 0.1, 0.1),
-        boom: () => AudioSys.playNoise(),
-    };
+const STATE = {
+    isPlaying: false,
+    score: 0,
+    bombsHit: 0,
+    maxBombs: 3,
+    lastTime: 0,
+    spawnTimer: 0,
+    comboTimer: 0,
+    comboCount: 0,
+    cursor: { x: 0, y: 0, z: 0, active: false }, // World coordinates
+    prevCursor: { x: 0, y: 0, z: 0 },
+    width: window.innerWidth,
+    height: window.innerHeight
+};
 
-    // --- Three.js Init ---
-    const canvas = document.getElementById('output-canvas');
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = true;
+// Arrays to hold active game entities
+const entities = [];
+const particles = [];
 
-    const scene = new THREE.Scene();
-    
-    const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 100);
-    camera.position.set(0, 0, 10); // Camera back
+/**
+ * AUDIO SYSTEM (Procedural - No external assets)
+ */
+const AudioSys = {
+    ctx: null,
+    init: function() {
+        window.AudioContext = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioContext();
+    },
+    playTone: function(freq, type, duration, vol = 0.1) {
+        if(!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+        gain.gain.setValueAtTime(vol, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start();
+        osc.stop(this.ctx.currentTime + duration);
+    },
+    playSlice: function() {
+        // High pitched swoosh
+        this.playTone(600 + Math.random()*400, 'sawtooth', 0.1, 0.1);
+    },
+    playBomb: function() {
+        // Low boom
+        this.playTone(100, 'square', 0.5, 0.3);
+        this.playTone(50, 'sine', 0.8, 0.5);
+    },
+    playGameOver: function() {
+        this.playTone(300, 'sawtooth', 0.5, 0.2);
+        setTimeout(() => this.playTone(250, 'sawtooth', 0.5, 0.2), 400);
+        setTimeout(() => this.playTone(150, 'sawtooth', 1.0, 0.2), 800);
+    }
+};
 
-    // Lighting
-    const ambLight = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambLight);
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-    dirLight.position.set(5, 10, 10);
-    dirLight.castShadow = true;
-    scene.add(dirLight);
+/**
+ * THREE.JS SETUP
+ */
+const scene = new THREE.Scene();
+// Soft gradient background effect using fog
+scene.fog = new THREE.FogExp2(0x1a1a1a, 0.02);
 
-    // Game Objects Lists
-    let objects = [];
-    let particles = [];
+const camera = new THREE.PerspectiveCamera(60, STATE.width / STATE.height, 0.1, 100);
+camera.position.z = CONFIG.cameraZ;
 
-    // --- Object Factory ---
-    const FRUIT_TYPES = {
-        WATERMELON: { color: 0x2d5a27, flesh: 0xff3333, type: 'sphere', tex: true },
-        ORANGE: { color: 0xffa500, flesh: 0xffcc00, type: 'sphere', skinNoise: true },
-        APPLE: { color: 0xdd0000, flesh: 0xffffee, type: 'apple' },
-        MANGO: { color: 0xffcc00, flesh: 0xffd700, type: 'mango' },
-        BOMB: { color: 0x222222, type: 'bomb' }
-    };
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setSize(STATE.width, STATE.height);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio for performance
+document.body.appendChild(renderer.domElement);
 
-    class GameObject {
-        constructor() {
-            this.active = true;
+// Lighting
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambientLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(5, 10, 7);
+scene.add(dirLight);
+
+// Determine visible world width/height at z=0 for coordinate mapping
+const vFOV = THREE.MathUtils.degToRad(camera.fov);
+const visibleHeight = 2 * Math.tan(vFOV / 2) * CONFIG.cameraZ;
+const visibleWidth = visibleHeight * camera.aspect;
+
+/**
+ * ASSETS & HELPERS
+ */
+
+// Procedural Textures
+function createSmokeTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32; canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createRadialGradient(16,16,0,16,16,16);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,32,32);
+    const tex = new THREE.CanvasTexture(canvas);
+    return tex;
+}
+const smokeTexture = createSmokeTexture();
+
+// Materials
+const matFruitBase = new THREE.MeshStandardMaterial({ roughness: 0.1, metalness: 0.1 });
+const matBomb = new THREE.MeshPhongMaterial({ color: CONFIG.colors.bomb, shininess: 100, emissive: 0x330000 });
+const matSmoke = new THREE.PointsMaterial({ 
+    size: 2, map: smokeTexture, transparent: true, opacity: 0.6, 
+    depthWrite: false, color: CONFIG.colors.smoke 
+});
+const matTrail = new THREE.MeshBasicMaterial({ color: CONFIG.colors.trail, transparent: true, opacity: 0.5 });
+
+/**
+ * GAME CLASSES
+ */
+
+class Trail {
+    constructor() {
+        this.history = [];
+        this.maxPoints = 10;
+        this.geometry = new THREE.BufferGeometry();
+        this.mesh = new THREE.Line(this.geometry, matTrail);
+        scene.add(this.mesh);
+    }
+    update(x, y) {
+        if(STATE.cursor.active) {
+            this.history.push(new THREE.Vector3(x, y, 0));
+            if (this.history.length > this.maxPoints) this.history.shift();
+        } else {
+            if(this.history.length > 0) this.history.shift();
+        }
+        this.geometry.setFromPoints(this.history);
+    }
+}
+const cursorTrail = new Trail();
+
+class ParticleSystem {
+    constructor(x, y, color, count, type = 'juice') {
+        this.type = type;
+        this.geo = new THREE.BufferGeometry();
+        const pos = [];
+        const vel = [];
+        
+        for(let i=0; i<count; i++) {
+            pos.push(x, y, 0);
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 5 + 2;
+            vel.push(Math.cos(angle) * speed, Math.sin(angle) * speed, (Math.random()-0.5)*5);
+        }
+        
+        this.geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        this.velocities = vel;
+        
+        if(type === 'smoke') {
+            this.material = matSmoke.clone();
+            this.mesh = new THREE.Points(this.geo, this.material);
+        } else {
+            this.material = new THREE.PointsMaterial({ color: color, size: 0.4, transparent: true });
+            this.mesh = new THREE.Points(this.geo, this.material);
+        }
+        
+        scene.add(this.mesh);
+        this.life = 1.0;
+    }
+
+    update(dt) {
+        this.life -= dt * (this.type === 'smoke' ? 0.8 : 2.0); // Smoke lasts longer
+        const pos = this.geo.attributes.position.array;
+        
+        for(let i=0; i < this.velocities.length/3; i++) {
+            const ix = i*3;
+            pos[ix] += this.velocities[ix] * dt;
+            pos[ix+1] += this.velocities[ix+1] * dt;
+            pos[ix+2] += this.velocities[ix+2] * dt;
             
-            // Random Type
-            const types = Object.keys(FRUIT_TYPES);
-            // 15% chance of bomb
-            const isBomb = Math.random() < 0.15;
-            const key = isBomb ? 'BOMB' : types[Math.floor(Math.random() * (types.length - 1))];
-            this.config = FRUIT_TYPES[key];
-            this.isBomb = isBomb;
-
-            this.mesh = new THREE.Group();
-            this.radius = CONFIG.fruitRadius;
-
-            // Build Mesh
-            this.buildMesh();
-
-            // Physics Init
-            // Wider X spawn range
-            const spawnX = (Math.random() - 0.5) * 10; 
-            this.mesh.position.set(spawnX, -8, CONFIG.zPlane);
-            
-            // Higher Jump Velocity
-            const upVel = 0.45 + Math.random() * 0.15; 
-            // Velocity towards center
-            const xVel = -spawnX * 0.04 + (Math.random() - 0.5) * 0.05;
-            
-            this.velocity = new THREE.Vector3(xVel, upVel, 0);
-            this.rotVelocity = new THREE.Vector3(Math.random(), Math.random(), Math.random()).multiplyScalar(0.05);
-
-            scene.add(this.mesh);
+            // Gravity
+            if(this.type !== 'smoke') this.velocities[ix+1] += CONFIG.gravity * dt;
+            else {
+                this.velocities[ix+1] += 2.0 * dt; // Smoke rises
+                // Expand smoke
+                pos[ix] += (Math.random()-0.5)*0.1;
+            }
+        }
+        this.geo.attributes.position.needsUpdate = true;
+        this.material.opacity = this.life;
+        
+        // Expand smoke particles visual size
+        if(this.type === 'smoke') {
+            this.material.size += dt * 5;
         }
 
-        buildMesh() {
-            let geo, mat;
+        return this.life > 0;
+    }
+
+    dispose() {
+        scene.remove(this.mesh);
+        this.geo.dispose();
+        this.material.dispose();
+    }
+}
+
+class GameObject {
+    constructor(isBomb) {
+        this.isBomb = isBomb;
+        this.radius = isBomb ? 0.8 : 0.6;
+        this.sliced = false;
+        
+        // Visuals
+        const geometry = isBomb 
+            ? new THREE.IcosahedronGeometry(this.radius, 1) 
+            : new THREE.SphereGeometry(this.radius, 16, 16);
             
-            if (this.config.type === 'sphere') {
-                geo = new THREE.SphereGeometry(1.2, 24, 24);
-                mat = new THREE.MeshStandardMaterial({ 
-                    color: this.config.color,
-                    map: this.config.tex ? watermelonTex : null,
-                    roughness: 0.4 
-                });
-            } 
-            else if (this.config.type === 'apple') {
-                geo = new THREE.SphereGeometry(1.1, 24, 24);
-                // Deform slightly for apple shape
-                const pos = geo.attributes.position;
-                for(let i=0; i<pos.count; i++){
-                    const y = pos.getY(i);
-                    if(y > 0.8) pos.setY(i, y - 0.3); // Dimple top
+        const color = isBomb ? 0x000000 : this.getRandomFruitColor();
+        const mat = isBomb ? matBomb : matFruitBase.clone();
+        if(!isBomb) mat.color.setHex(color);
+        
+        this.mesh = new THREE.Mesh(geometry, mat);
+        this.mesh.colorHex = color; // Store for particles
+        
+        // Initial Physics
+        // Spawn at bottom, random X
+        const startX = (Math.random() - 0.5) * (visibleWidth * 0.6);
+        this.mesh.position.set(startX, -visibleHeight/2 - 2, 0);
+        
+        // Upward velocity with random arc
+        const vy = Math.random() * 5 + 12; // Vertical impulse
+        const vx = (Math.random() - 0.5) * 4; // Horizontal drift
+        // If spawning far left, drift right, and vice versa
+        if (startX < -visibleWidth/4) this.velocity = new THREE.Vector3(Math.abs(vx), vy, 0);
+        else if (startX > visibleWidth/4) this.velocity = new THREE.Vector3(-Math.abs(vx), vy, 0);
+        else this.velocity = new THREE.Vector3(vx, vy, 0);
+
+        // Rotation speed
+        this.rotVelocity = new THREE.Vector3(Math.random(), Math.random(), Math.random());
+
+        scene.add(this.mesh);
+    }
+
+    getRandomFruitColor() {
+        const colors = [0xff0000, 0xffaa00, 0xffff00, 0x00ff00, 0xaa00ff];
+        return colors[Math.floor(Math.random() * colors.length)];
+    }
+
+    update(dt) {
+        // Physics
+        this.velocity.y += CONFIG.gravity * dt;
+        this.mesh.position.addScaledVector(this.velocity, dt);
+        this.mesh.rotation.x += this.rotVelocity.x * dt;
+        this.mesh.rotation.y += this.rotVelocity.y * dt;
+
+        // Bounds check (bottom)
+        if (this.mesh.position.y < -visibleHeight/2 - 5) {
+            return false; // Remove
+        }
+        return true;
+    }
+
+    slice(direction) {
+        this.sliced = true;
+        scene.remove(this.mesh);
+
+        if (this.isBomb) {
+            // Bomb Effect
+            AudioSys.playBomb();
+            // Smoke
+            particles.push(new ParticleSystem(this.mesh.position.x, this.mesh.position.y, 0x555555, 20, 'smoke'));
+            handleBombHit();
+        } else {
+            // Fruit Effect
+            AudioSys.playSlice();
+            addScore(10);
+            
+            // Juice Particles
+            particles.push(new ParticleSystem(this.mesh.position.x, this.mesh.position.y, this.mesh.colorHex, 15));
+
+            // Spawn two halves (visual trick)
+            this.createHalf(direction, 1);
+            this.createHalf(direction, -1);
+        }
+    }
+
+    createHalf(sliceDir, side) {
+        // Simple approximation: scaled spheres moving apart
+        const geo = new THREE.SphereGeometry(this.radius * 0.9, 16, 16);
+        const mat = this.mesh.material;
+        const half = new THREE.Mesh(geo, mat);
+        half.position.copy(this.mesh.position);
+        
+        // Separate perpendicular to slice direction
+        const perp = new THREE.Vector3(-sliceDir.y, sliceDir.x, 0).normalize();
+        half.position.addScaledVector(perp, side * 0.2);
+        
+        scene.add(half);
+        
+        // Add to entities as a "dead" object just to fall
+        const obj = {
+            mesh: half,
+            velocity: this.velocity.clone().addScaledVector(perp, side * 2),
+            update: (dt) => {
+                obj.velocity.y += CONFIG.gravity * dt;
+                obj.mesh.position.addScaledVector(obj.velocity, dt);
+                obj.mesh.rotation.z += side * 5 * dt;
+                if(obj.mesh.position.y < -visibleHeight/2 - 5) {
+                    scene.remove(obj.mesh);
+                    return false;
                 }
-                mat = new THREE.MeshStandardMaterial({ color: this.config.color, roughness: 0.2 });
-                
-                // Add Stem
-                const stem = new THREE.Mesh(
-                    new THREE.CylinderGeometry(0.05, 0.05, 0.5),
-                    new THREE.MeshStandardMaterial({ color: 0x5c4033 })
-                );
-                stem.position.y = 1.0;
-                this.mesh.add(stem);
+                return true;
             }
-            else if (this.config.type === 'mango') {
-                geo = new THREE.SphereGeometry(1.1, 24, 24);
-                geo.scale(1, 1.4, 0.9); // Stretch
-                mat = new THREE.MeshStandardMaterial({ color: this.config.color, roughness: 0.3 });
-            }
-            else if (this.config.type === 'bomb') {
-                geo = new THREE.SphereGeometry(1.4, 24, 24);
-                mat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8, roughness: 0.2 });
-                // Spikes or fuse? Let's do fuse
-                const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.6), new THREE.MeshBasicMaterial({color: 0x885522}));
-                fuse.position.y = 1.4;
-                this.mesh.add(fuse);
-                
-                // Glowing tip
-                const spark = new THREE.Mesh(new THREE.SphereGeometry(0.2), new THREE.MeshBasicMaterial({color: 0xff0000}));
-                spark.position.y = 1.8;
-                this.mesh.add(spark);
-                
-                // Pulse effect helper
-                this.spark = spark;
-            }
-
-            const body = new THREE.Mesh(geo, mat);
-            body.castShadow = true;
-            this.mesh.add(body);
-            
-            // Store geometry for slicing later
-            this.mainGeo = geo;
-        }
-
-        update() {
-            if(!this.active) return;
-
-            // Physics
-            this.velocity.y -= CONFIG.gravity;
-            this.mesh.position.add(this.velocity);
-            this.mesh.rotation.x += this.rotVelocity.x;
-            this.mesh.rotation.y += this.rotVelocity.y;
-
-            // Bomb spark pulse
-            if(this.isBomb && this.spark) {
-                const s = 1 + Math.sin(Date.now() * 0.02) * 0.5;
-                this.spark.scale.set(s,s,s);
-            }
-
-            // Despawn
-            if (this.mesh.position.y < -15) this.cleanup();
-        }
-
-        cleanup() {
-            this.active = false;
-            scene.remove(this.mesh);
-        }
-
-        hit(sliceDir) {
-            if(!this.active) return;
-            this.cleanup();
-
-            if (this.isBomb) {
-                AudioSys.boom();
-                createExplosion(this.mesh.position);
-                STATE.bombsHit++;
-                updateUI();
-                if(STATE.bombsHit >= 3) endGame();
-            } else {
-                AudioSys.slice();
-                STATE.score++;
-                updateUI();
-                createSliceEffect(this.mesh.position, this.config, sliceDir, this.mesh.rotation);
-            }
-        }
+        };
+        entities.push(obj);
     }
+}
 
-    // --- Visual Effects ---
+/**
+ * INPUT & LOGIC
+ */
 
-    function createSliceEffect(pos, config, dir, rot) {
-        // 1. Juice Particles
-        for(let i=0; i<12; i++) {
-            const p = new THREE.Mesh(
-                new THREE.BoxGeometry(0.15, 0.15, 0.15),
-                new THREE.MeshBasicMaterial({ color: config.flesh })
-            );
-            p.position.copy(pos);
-            // Spray in direction of slice
-            const vel = new THREE.Vector3((Math.random()-0.5), (Math.random()-0.5), (Math.random()-0.5));
-            vel.add(dir.clone().multiplyScalar(0.2));
-            particles.push({ mesh: p, vel: vel, life: 1.0 });
-            scene.add(p);
-        }
+// Handle MediaPipe Hand Results
+function onResults(results) {
+    if (!STATE.isPlaying) return;
 
-        // 2. Spawn Halves (Geometric trick)
-        // We create two hemispheres. 
-        // To mimic the fruit shape, we just scale a sphere geometry.
-        // The "cut" face is a CircleGeometry added to the group.
+    // Hide loading if valid
+    document.getElementById('loading').classList.add('hidden');
 
-        const halfGeo = new THREE.SphereGeometry(1.2, 16, 16, 0, Math.PI); // Half sphere
-        const capGeo = new THREE.CircleGeometry(1.2, 16);
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const landmarks = results.multiHandLandmarks[0];
+        const indexTip = landmarks[8]; // Index finger tip
 
-        for (let i = 0; i < 2; i++) {
-            const group = new THREE.Group();
-            
-            // Rind
-            const rind = new THREE.Mesh(halfGeo, new THREE.MeshStandardMaterial({ 
-                color: config.color, 
-                map: config.tex ? watermelonTex : null,
-                side: THREE.DoubleSide
-            }));
-            
-            // Flesh (Cap)
-            const flesh = new THREE.Mesh(capGeo, new THREE.MeshBasicMaterial({ color: config.flesh, side: THREE.DoubleSide }));
-            // Align flesh with cut side of sphere
-            flesh.rotation.y = -Math.PI / 2; // Default sphere cut is along Y axis in Three.js params? 
-            // Actually SphereGeometry(..., 0, PI) cuts along the vertical axis (phi). 
-            // We need to align the circle to fill the gap.
-            
-            // Let's simplify: Just rotate the half sphere so the flat part faces a direction
-            rind.rotation.y = -Math.PI/2;
-            flesh.position.set(0,0,0);
-            flesh.rotation.y = -Math.PI/2;
-
-            group.add(rind);
-            group.add(flesh);
-
-            // Initial Position
-            group.position.copy(pos);
-            
-            // Apply Original Rotation roughly
-            group.rotation.copy(rot);
-            
-            // Separate them
-            // Perpendicular to slice direction
-            const sepDir = new THREE.Vector3(-dir.y, dir.x, 0).normalize();
-            if (i===1) sepDir.negate();
-            
-            // Move slightly apart instantly
-            group.position.add(sepDir.clone().multiplyScalar(0.2));
-
-            // Physics for half
-            const vel = sepDir.multiplyScalar(0.15);
-            vel.y += 0.1; // slight pop up
-
-            // Scaling specific for fruit types
-            if(config.type === 'mango') group.scale.set(1, 1.4, 0.9);
-            if(config.type === 'apple') group.scale.set(1.1, 1.1, 1.1);
-
-            scene.add(group);
-
-            // Add to particle system to handle physics/despawn
-            particles.push({
-                mesh: group,
-                vel: vel,
-                rotVel: new THREE.Vector3(Math.random(), Math.random(), 0).multiplyScalar(0.1),
-                life: 2.0, // longer life for chunks
-                isChunk: true
-            });
-        }
-    }
-
-    function createExplosion(pos) {
-        const smokeGeo = new THREE.IcosahedronGeometry(0.5, 0);
-        const smokeMat = new THREE.MeshBasicMaterial({ color: 0x555555, transparent: true });
+        // Conversion: MediaPipe (0,0 top-left) -> Three.js World
+        // X: 0..1 -> -visibleWidth/2 .. visibleWidth/2 (Mirrored: 1-x)
+        // Y: 0..1 -> visibleHeight/2 .. -visibleHeight/2
         
-        for(let i=0; i<15; i++) {
-            const mesh = new THREE.Mesh(smokeGeo, smokeMat.clone());
-            mesh.position.copy(pos);
-            const vel = new THREE.Vector3((Math.random()-0.5), (Math.random()-0.5), (Math.random()-0.5)).multiplyScalar(0.5);
-            particles.push({ mesh, vel, life: 1.0, decay: 0.03 });
-            scene.add(mesh);
+        const rawX = (1 - indexTip.x) - 0.5; // Mirror and center
+        const rawY = 0.5 - indexTip.y;       // Center
+
+        const targetX = rawX * visibleWidth;
+        const targetY = rawY * visibleHeight;
+
+        STATE.prevCursor.x = STATE.cursor.x;
+        STATE.prevCursor.y = STATE.cursor.y;
+
+        // Smoothing (Lerp)
+        STATE.cursor.x += (targetX - STATE.cursor.x) * 0.5;
+        STATE.cursor.y += (targetY - STATE.cursor.y) * 0.5;
+        STATE.cursor.active = true;
+
+        checkCollisions();
+    } else {
+        STATE.cursor.active = false;
+    }
+}
+
+function checkCollisions() {
+    if(!STATE.cursor.active) return;
+
+    const p1 = new THREE.Vector2(STATE.prevCursor.x, STATE.prevCursor.y);
+    const p2 = new THREE.Vector2(STATE.cursor.x, STATE.cursor.y);
+    const swipeVec = new THREE.Vector2().subVectors(p2, p1);
+    const swipeLen = swipeVec.length();
+
+    // Minimum speed to slice
+    if (swipeLen < 0.1) return; 
+
+    const dir = swipeVec.normalize();
+
+    // Line Segment vs Circle collision (Simplified 2D check in 3D world plane)
+    for (const entity of entities) {
+        if (entity instanceof GameObject && !entity.sliced) {
+            const pos = new THREE.Vector2(entity.mesh.position.x, entity.mesh.position.y);
+            
+            // Project point onto line segment
+            const v = new THREE.Vector2().subVectors(pos, p1);
+            const t = Math.max(0, Math.min(1, v.dot(swipeVec) / (swipeLen * swipeLen)));
+            const projection = new THREE.Vector2().copy(p1).addScaledVector(swipeVec, t);
+            
+            const dist = pos.distanceTo(projection);
+            
+            if (dist < entity.radius) {
+                entity.slice(dir);
+            }
         }
     }
+}
 
-    // --- Hand Trail (Blade) ---
-    const trailGeo = new THREE.BufferGeometry();
-    const trailPos = new Float32Array(20 * 3); // 20 points
-    trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
-    const trailMat = new THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 3 });
-    const bladeTrail = new THREE.Line(trailGeo, trailMat);
-    scene.add(bladeTrail);
-
-    let trailPoints = [];
-
-    function updateTrail() {
-        // Add point
-        trailPoints.unshift(STATE.handPos.clone());
-        if (trailPoints.length > 20) trailPoints.pop();
-
-        // Update Mesh
-        const posArr = bladeTrail.geometry.attributes.position.array;
-        for(let i=0; i<trailPoints.length; i++) {
-            posArr[i*3] = trailPoints[i].x;
-            posArr[i*3+1] = trailPoints[i].y;
-            posArr[i*3+2] = trailPoints[i].z;
-        }
-        bladeTrail.geometry.attributes.position.needsUpdate = true;
-    }
-
-    // --- Logic Loop ---
-
-    function checkCollisions() {
-        // We check distance between hand and fruit
-        // AND ensure hand is moving fast enough (optional, but feels better)
+function spawnLogic(dt) {
+    STATE.spawnTimer += dt;
+    // Difficulty curve: spawn faster as score increases, capped at 400ms
+    const currentInterval = Math.max(400, CONFIG.spawnInterval - (STATE.score * 5));
+    
+    if (STATE.spawnTimer > currentInterval / 1000) {
+        STATE.spawnTimer = 0;
         
-        // Hand velocity calc
-        STATE.handVelocity.subVectors(STATE.handPos, STATE.prevHandPos);
-        const speed = STATE.handVelocity.length();
-
-        // Calculate slice direction for cut effect
-        const sliceDir = STATE.handVelocity.clone().normalize();
-
-        objects.forEach(obj => {
-            if (!obj.active) return;
-            
-            // Distance check
-            const dist = obj.mesh.position.distanceTo(STATE.handPos);
-            
-            // Hit Condition: Overlap AND (Speed > Threshold OR Bomb)
-            // We allow slow touches for testing, but ideally require speed
-            if (dist < obj.radius) {
-                // Debounce: If we are "inside" the fruit, only slice if we weren't inside last frame?
-                // Simplified: Just kill it.
-                obj.hit(sliceDir);
-            }
-        });
+        // Chance for Bomb: increases slightly with score, max 20%
+        const bombChance = Math.min(0.2, 0.05 + (STATE.score * 0.001));
+        const isBomb = Math.random() < bombChance;
+        
+        entities.push(new GameObject(isBomb));
     }
+}
 
-    function updateUI() {
-        document.getElementById('score-val').innerText = STATE.score;
-        document.getElementById('bombs-val').innerText = STATE.bombsHit;
-    }
+/**
+ * GAME CONTROL
+ */
 
-    function endGame() {
-        STATE.isPlaying = false;
-        document.getElementById('final-score').innerText = STATE.score;
-        document.getElementById('game-over-screen').classList.remove('hidden');
-    }
+function addScore(points) {
+    STATE.score += points;
+    document.getElementById('score').innerText = STATE.score;
+}
 
-    function gameLoop() {
-        requestAnimationFrame(gameLoop);
-
-        // 1. Spawning
-        if (STATE.isPlaying && STATE.score + STATE.bombsHit * 5 + performance.now()/1000 % CONFIG.spawnRate < 1) {
-             // randomness helper
-        }
-        // Manual Frame Count for spawning
-        if (STATE.isPlaying) {
-            if (Math.random() < (1 / CONFIG.spawnRate)) {
-                objects.push(new GameObject());
-            }
-        }
-
-        // 2. Update Objects
-        objects.forEach(o => o.update());
-        objects = objects.filter(o => o.active);
-
-        // 3. Update Particles (Chunks and Juice)
-        particles.forEach(p => {
-            p.life -= (p.decay || 0.015);
-            p.mesh.position.add(p.vel);
-            if(p.rotVel) {
-                p.mesh.rotation.x += p.rotVel.x;
-                p.mesh.rotation.y += p.rotVel.y;
-            }
-            // Gravity for chunks
-            if(p.isChunk) {
-                p.vel.y -= 0.005;
-            }
-
-            if(p.mesh.material.opacity) p.mesh.material.opacity = p.life;
-
-            if (p.life <= 0) {
-                scene.remove(p.mesh);
-                p.active = false;
-            } else {
-                p.active = true;
-            }
-        });
-        particles = particles.filter(p => p.active);
-
-        // 4. Hand & Collision
-        updateTrail();
-        if (STATE.isPlaying) checkCollisions();
-        STATE.prevHandPos.copy(STATE.handPos);
-
-        // 5. Render
-        renderer.render(scene, camera);
-    }
-
-    // --- MediaPipe Hand Tracking ---
-    const videoEl = document.getElementById('video-input');
-    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+function handleBombHit() {
+    STATE.bombsHit++;
     
-    hands.setOptions({
-        maxNumHands: 1,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5
-    });
+    // Update HUD
+    const livesStr = "❌ ".repeat(STATE.maxBombs - STATE.bombsHit);
+    document.getElementById('lives').innerText = livesStr;
 
-    hands.onResults(results => {
-        const btnStart = document.getElementById('btn-start');
-        const loadTxt = document.getElementById('loading');
-        if(loadTxt && btnStart.style.display === 'none') {
-            loadTxt.style.display = 'none';
-            btnStart.style.display = 'block';
-        }
+    // Camera shake
+    const shake = setInterval(() => {
+        camera.position.x = (Math.random() - 0.5) * 0.5;
+        camera.position.y = (Math.random() - 0.5) * 0.5;
+    }, 16);
+    setTimeout(() => {
+        clearInterval(shake);
+        camera.position.set(0, 0, CONFIG.cameraZ);
+    }, 300);
 
-        if (results.multiHandLandmarks.length > 0) {
-            const lm = results.multiHandLandmarks[0][8]; // Index Tip
-            
-            // Mapping 0..1 to World Coordinates
-            // Camera is at Z=10. Game Plane at Z=-8.
-            // We need to determine the frustum width/height at Z=-8.
-            const dist = 10 - CONFIG.zPlane; // 18 units
-            const vFOV = THREE.MathUtils.degToRad(50);
-            const height = 2 * Math.tan( vFOV / 2 ) * dist;
-            const width = height * camera.aspect;
+    if (STATE.bombsHit >= STATE.maxBombs) {
+        gameOver();
+    }
+}
 
-            // Mirror X
-            const x = (1 - lm.x) * width - width/2;
-            const y = (1 - lm.y) * height - height/2;
-
-            // Lerp for smoothness
-            STATE.handPos.lerp(new THREE.Vector3(x, y, CONFIG.zPlane), 0.4);
-        }
-    });
-
-    const cameraUtils = new Camera(videoEl, {
-        onFrame: async () => { await hands.send({image: videoEl}); },
-        width: 640, height: 480
-    });
-    cameraUtils.start();
-
-    // --- Event Listeners ---
-    document.getElementById('btn-start').addEventListener('click', () => {
-        AudioSys.init();
-        STATE.score = 0; 
-        STATE.bombsHit = 0; 
-        STATE.isPlaying = true;
-        document.getElementById('start-screen').classList.add('hidden');
-    });
-
-    document.getElementById('btn-restart').addEventListener('click', () => {
-        STATE.score = 0; 
-        STATE.bombsHit = 0; 
-        STATE.isPlaying = true;
-        objects.forEach(o => o.cleanup());
-        objects = [];
-        document.getElementById('game-over-screen').classList.add('hidden');
-    });
+function startGame() {
+    STATE.isPlaying = true;
+    STATE.score = 0;
+    STATE.bombsHit = 0;
+    STATE.spawnTimer = 0;
+    entities.forEach(e => scene.remove(e.mesh));
+    entities.length = 0;
+    particles.forEach(p => p.dispose());
+    particles.length = 0;
     
-    window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth/window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+    document.getElementById('score').innerText = '0';
+    document.getElementById('lives').innerText = '❌ ❌ ❌';
+    document.getElementById('start-screen').classList.add('hidden');
+    document.getElementById('gameover-screen').classList.add('hidden');
+    
+    AudioSys.init();
+}
 
-    gameLoop();
+function gameOver() {
+    STATE.isPlaying = false;
+    AudioSys.playGameOver();
+    document.getElementById('final-score').innerText = STATE.score;
+    document.getElementById('gameover-screen').classList.remove('hidden');
+}
+
+/**
+ * MAIN LOOP
+ */
+const clock = new THREE.Clock();
+
+function animate() {
+    requestAnimationFrame(animate);
+    
+    const dt = clock.getDelta();
+
+    if (STATE.isPlaying) {
+        spawnLogic(dt);
+        cursorTrail.update(STATE.cursor.x, STATE.cursor.y);
+    } else {
+        // Idle animation for trail
+        cursorTrail.update(STATE.cursor.x, STATE.cursor.y);
+    }
+
+    // Update Entities
+    for (let i = entities.length - 1; i >= 0; i--) {
+        const alive = entities[i].update(dt);
+        if (!alive) {
+            scene.remove(entities[i].mesh);
+            entities.splice(i, 1);
+        }
+    }
+
+    // Update Particles
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const alive = particles[i].update(dt);
+        if (!alive) {
+            particles[i].dispose();
+            particles.splice(i, 1);
+        }
+    }
+
+    renderer.render(scene, camera);
+}
+
+/**
+ * INITIALIZATION
+ */
+const hands = new Hands({locateFile: (file) => {
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+}});
+hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+});
+hands.onResults(onResults);
+
+const videoElement = document.getElementById('video-input');
+const cameraObj = new Camera(videoElement, {
+    onFrame: async () => {
+        await hands.send({image: videoElement});
+    },
+    width: 640,
+    height: 480
+});
+
+// Start camera but wait for user to click "Start" for game logic
+cameraObj.start();
+
+// UI Listeners
+document.getElementById('btn-start').addEventListener('click', startGame);
+document.getElementById('btn-restart').addEventListener('click', startGame);
+
+// Handle Resize
+window.addEventListener('resize', () => {
+    STATE.width = window.innerWidth;
+    STATE.height = window.innerHeight;
+    camera.aspect = STATE.width / STATE.height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(STATE.width, STATE.height);
+});
+
+// Kick off render loop
+animate();
 
 </script>
 </body>
