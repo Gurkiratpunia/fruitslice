@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webcam 3D Fruit Ninja</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        /* Webcam feed (hidden but processing) or visible for debug */
+        #video-input {
+            position: absolute;
+            top: 0;
+            left: 0;
+            visibility: hidden; /* We use landmarks, not the raw video */
+            transform: scaleX(-1);
+        }
+
+        /* Canvas for Three.js */
+        #output-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* UI Overlay */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none; /* Let clicks pass through to canvas if needed */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .hud-top {
+            display: flex;
+            justify-content: space-between;
+            font-size: 2rem;
+            font-weight: bold;
+            color: white;
+            text-shadow: 0 0 10px #fff, 0 0 20px #ff00de;
+        }
+
+        .score-box { color: #00ffea; text-shadow: 0 0 10px #00ffea; }
+        .bomb-box { color: #ff3333; text-shadow: 0 0 10px #ff3333; }
+
+        /* Screens */
+        #start-screen, #game-over-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            backdrop-filter: blur(5px);
+        }
+
+        h1 {
+            font-size: 4rem;
+            color: #fff;
+            margin: 0 0 20px 0;
+            text-transform: uppercase;
+            background: linear-gradient(to right, #ff00de, #00ffea);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: pulse 2s infinite;
+        }
+
+        button {
+            padding: 15px 40px;
+            font-size: 1.5rem;
+            background: transparent;
+            color: white;
+            border: 2px solid white;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.3s;
+            border-radius: 30px;
+            box-shadow: 0 0 15px rgba(255,255,255,0.5);
+        }
+
+        button:hover {
+            background: white;
+            color: black;
+            box-shadow: 0 0 30px rgba(255,255,255,0.8);
+            transform: scale(1.1);
+        }
+
+        .hidden { display: none !important; }
+
+        #loading-text {
+            color: white;
+            font-size: 1.2rem;
+            margin-top: 10px;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <video id="video-input" playsinline></video>
+    <canvas id="output-canvas"></canvas>
+
+    <!-- UI Layer -->
+    <div id="ui-layer">
+        <div class="hud-top">
+            <div class="score-box">SCORE: <span id="score-val">0</span></div>
+            <div class="bomb-box">BOMBS: <span id="bombs-val">0</span>/3</div>
+        </div>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="start-screen">
+        <h1>Neon Slice VR</h1>
+        <div id="loader">Loading Computer Vision...</div>
+        <button id="btn-start" class="hidden">Start Game</button>
+        <p id="loading-text">Allow camera access to play.<br>Use your index finger to slice.</p>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="hidden">
+        <h1>Game Over</h1>
+        <h2 style="color:white">Final Score: <span id="final-score">0</span></h2>
+        <button id="btn-restart">Try Again</button>
+    </div>
+</div>
+
+<!-- Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js"
+    }
+  }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+
+    // --- Game State & Config ---
+    const CONFIG = {
+        gravity: 0.15, // Gravity strength
+        spawnRate: 60, // Frames between spawns (decreases over time)
+        zPlane: -5,    // Z-depth where game happens
+        fruitRadius: 1.2,
+        trailLength: 15, // How many frames the hand trail persists
+        colors: [0xFF0000, 0x00FF00, 0xFFFF00, 0xFFA500, 0x800080] // Fruit colors
+    };
+
+    const STATE = {
+        score: 0,
+        bombsHit: 0,
+        isPlaying: false,
+        frameCount: 0,
+        handPos: new THREE.Vector3(0, -10, 0), // Current tracked hand pos
+        prevHandPos: new THREE.Vector3(0, -10, 0),
+        handHistory: [],
+        fps: 60
+    };
+
+    // --- Audio System (Web Audio API) ---
+    // Synthesized sounds to avoid external asset loading issues
+    const AudioSys = {
+        ctx: null,
+        init: () => {
+            window.AudioContext = window.AudioContext || window.webkitAudioContext;
+            AudioSys.ctx = new AudioContext();
+        },
+        playTone: (freq, type, duration, vol = 0.1) => {
+            if (!AudioSys.ctx) return;
+            const osc = AudioSys.ctx.createOscillator();
+            const gain = AudioSys.ctx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, AudioSys.ctx.currentTime);
+            gain.gain.setValueAtTime(vol, AudioSys.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, AudioSys.ctx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(AudioSys.ctx.destination);
+            osc.start();
+            osc.stop(AudioSys.ctx.currentTime + duration);
+        },
+        playNoise: (duration, vol = 0.2) => {
+            if (!AudioSys.ctx) return;
+            const bufferSize = AudioSys.ctx.sampleRate * duration;
+            const buffer = AudioSys.ctx.createBuffer(1, bufferSize, AudioSys.ctx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+            const noise = AudioSys.ctx.createBufferSource();
+            noise.buffer = buffer;
+            const gain = AudioSys.ctx.createGain();
+            // Lowpass filter for explosion thump
+            const filter = AudioSys.ctx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 1000;
+            
+            gain.gain.setValueAtTime(vol, AudioSys.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, AudioSys.ctx.currentTime + duration);
+            
+            noise.connect(filter);
+            filter.connect(gain);
+            gain.connect(AudioSys.ctx.destination);
+            noise.start();
+        },
+        slice: () => AudioSys.playTone(800, 'sawtooth', 0.1, 0.05),
+        squish: () => AudioSys.playTone(400 + Math.random()*200, 'sine', 0.2, 0.1),
+        boom: () => AudioSys.playNoise(0.5, 0.5),
+        gameOver: () => {
+            AudioSys.playTone(150, 'triangle', 0.5, 0.3);
+            setTimeout(() => AudioSys.playTone(100, 'triangle', 1.0, 0.3), 400);
+        }
+    };
+
+    // --- Three.js Setup ---
+    const canvas = document.getElementById('output-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap pixel ratio for perf
+
+    const scene = new THREE.Scene();
+    // Simple lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(5, 10, 7);
+    scene.add(dirLight);
+
+    // Camera setup to map 1:1 with screen at Z=0 for logic
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.z = 15;
+
+    // Calculate Visible Bounds at zPlane
+    const vFOV = THREE.MathUtils.degToRad(camera.fov);
+    const heightAtZ = 2 * Math.tan(vFOV / 2) * Math.abs(camera.position.z - CONFIG.zPlane);
+    const widthAtZ = heightAtZ * camera.aspect;
+    const bounds = {
+        minX: -widthAtZ / 2, maxX: widthAtZ / 2,
+        minY: -heightAtZ / 2, maxY: heightAtZ / 2
+    };
+
+    // Arrays to manage game objects
+    let fruits = [];
+    let particles = [];
+    let handTrailMesh;
+
+    // --- Object Classes ---
+
+    // Geometry cache
+    const sphereGeo = new THREE.SphereGeometry(1, 16, 16);
+    const halfSphereGeo = new THREE.SphereGeometry(1, 16, 16, 0, Math.PI);
+
+    class GameObject {
+        constructor(isBomb) {
+            this.isBomb = isBomb;
+            this.active = true;
+            this.radius = CONFIG.fruitRadius;
+            
+            // Position
+            const startX = (Math.random() - 0.5) * widthAtZ * 0.8;
+            this.mesh = new THREE.Group();
+            this.mesh.position.set(startX, bounds.minY - 2, CONFIG.zPlane);
+            
+            // Physics
+            const xVel = (Math.random() - 0.5) * 0.3; 
+            const yVel = (Math.random() * 0.15) + 0.35; // Launch strength
+            this.velocity = new THREE.Vector3(xVel - (startX * 0.01), yVel, 0);
+            this.rotVelocity = new THREE.Vector3(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5).multiplyScalar(0.2);
+
+            // Visuals
+            if (isBomb) {
+                const mat = new THREE.MeshPhongMaterial({ color: 0x111111, emissive: 0x330000, shininess: 100 });
+                const body = new THREE.Mesh(sphereGeo, mat);
+                body.scale.set(1.5, 1.5, 1.5);
+                this.mesh.add(body);
+                
+                // Fuse glow
+                const fuseMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+                const fuse = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), fuseMat);
+                fuse.position.y = 1.5;
+                this.mesh.add(fuse);
+            } else {
+                this.color = CONFIG.colors[Math.floor(Math.random() * CONFIG.colors.length)];
+                const mat = new THREE.MeshPhongMaterial({ 
+                    color: this.color, 
+                    emissive: this.color, 
+                    emissiveIntensity: 0.2,
+                    shininess: 80 
+                });
+                const body = new THREE.Mesh(sphereGeo, mat);
+                body.scale.set(CONFIG.fruitRadius, CONFIG.fruitRadius, CONFIG.fruitRadius);
+                this.mesh.add(body);
+            }
+
+            scene.add(this.mesh);
+        }
+
+        update() {
+            if (!this.active) return;
+
+            // Gravity
+            this.velocity.y -= CONFIG.gravity * 0.1; // scaling gravity
+            this.mesh.position.add(this.velocity);
+            this.mesh.rotation.x += this.rotVelocity.x;
+            this.mesh.rotation.y += this.rotVelocity.y;
+
+            // Despawn below screen
+            if (this.mesh.position.y < bounds.minY - 5) {
+                this.cleanup();
+            }
+        }
+
+        cleanup() {
+            this.active = false;
+            scene.remove(this.mesh);
+        }
+
+        slice(direction) {
+            if (!this.active) return;
+            this.cleanup();
+            
+            if (this.isBomb) {
+                handleBombExplosion(this.mesh.position);
+            } else {
+                handleFruitSlice(this.mesh.position, this.color, direction);
+            }
+        }
+    }
+
+    class Particle {
+        constructor(pos, color, isSmoke = false) {
+            this.pos = pos.clone();
+            this.vel = new THREE.Vector3((Math.random()-0.5)*0.5, (Math.random()-0.5)*0.5, (Math.random()-0.5)*0.5);
+            this.life = 1.0;
+            this.decay = isSmoke ? 0.02 : 0.03;
+            
+            const geo = new THREE.PlaneGeometry(isSmoke ? 0.5 : 0.2, isSmoke ? 0.5 : 0.2);
+            const mat = new THREE.MeshBasicMaterial({ 
+                color: color, 
+                transparent: true, 
+                opacity: 1,
+                side: THREE.DoubleSide 
+            });
+            this.mesh = new THREE.Mesh(geo, mat);
+            this.mesh.position.copy(pos);
+            this.mesh.lookAt(camera.position);
+            scene.add(this.mesh);
+            this.active = true;
+        }
+
+        update() {
+            if(!this.active) return;
+            this.pos.add(this.vel);
+            this.mesh.position.copy(this.pos);
+            this.life -= this.decay;
+            this.mesh.material.opacity = this.life;
+            this.mesh.lookAt(camera.position);
+
+            if (this.life <= 0) {
+                scene.remove(this.mesh);
+                this.active = false;
+                this.mesh.geometry.dispose();
+                this.mesh.material.dispose();
+            }
+        }
+    }
+
+    // --- Visual Effects Helper ---
+
+    function handleFruitSlice(pos, color, dir) {
+        AudioSys.squish();
+        STATE.score += 10;
+        updateUI();
+
+        // Spawn Halves
+        for(let i=0; i<2; i++) {
+            const mat = new THREE.MeshPhongMaterial({ color: color, side: THREE.DoubleSide });
+            const half = new THREE.Mesh(halfSphereGeo, mat);
+            half.position.copy(pos);
+            half.scale.set(CONFIG.fruitRadius, CONFIG.fruitRadius, CONFIG.fruitRadius);
+            
+            // Orient cut relative to slice direction (simplified)
+            const angle = Math.atan2(dir.y, dir.x);
+            half.rotation.z = angle + (i === 0 ? 0 : Math.PI);
+            
+            scene.add(half);
+            
+            // Animate half flying away
+            const flyDir = new THREE.Vector3(-dir.y, dir.x, 0).normalize().multiplyScalar(i===0 ? 0.2 : -0.2);
+            
+            // Create a temporary object for the half to animate it simply
+            const animateHalf = () => {
+                if(half.position.y < bounds.minY - 5) {
+                    scene.remove(half);
+                    return;
+                }
+                half.position.add(flyDir);
+                half.position.y -= 0.15; // Gravity
+                half.rotation.x += 0.1;
+                requestAnimationFrame(animateHalf);
+            };
+            animateHalf();
+        }
+
+        // Spawn Juice Particles
+        for(let i=0; i<10; i++) {
+            particles.push(new Particle(pos, color));
+        }
+    }
+
+    function handleBombExplosion(pos) {
+        AudioSys.boom();
+        STATE.bombsHit++;
+        updateUI();
+
+        // Smoke particles
+        for(let i=0; i<20; i++) {
+            particles.push(new Particle(pos, 0x555555, true));
+        }
+
+        // Flash screen red
+        document.body.style.backgroundColor = '#500';
+        setTimeout(() => document.body.style.backgroundColor = '#1a1a1a', 100);
+
+        if (STATE.bombsHit >= 3) {
+            endGame();
+        }
+    }
+
+    // --- Hand Trail Logic ---
+    function initTrail() {
+        // Create a "ribbon" or tube effect dynamically? 
+        // For performance and simplicity, we'll use a thick Line/Tube updated every frame.
+        // Actually, a series of Mesh spheres is easiest for "neon glow" look.
+        
+        // We will just store points and draw a line in the update loop
+        const material = new THREE.LineBasicMaterial({
+            color: 0x00ffff,
+            linewidth: 5 // Note: linewidth doesn't work on all WebGL implementations (usually 1px)
+        });
+        const geometry = new THREE.BufferGeometry();
+        handTrailMesh = new THREE.Line(geometry, material);
+        scene.add(handTrailMesh);
+    }
+
+    function updateTrail() {
+        // Add current position to history
+        STATE.handHistory.unshift(STATE.handPos.clone());
+        if (STATE.handHistory.length > CONFIG.trailLength) {
+            STATE.handHistory.pop();
+        }
+
+        // Update Geometry
+        if (STATE.handHistory.length > 1) {
+            const points = STATE.handHistory;
+            handTrailMesh.geometry.setFromPoints(points);
+            // To make it look neon/glowing, we relies on the color. 
+            // A real "trail renderer" in ThreeJS is complex, this is a basic line.
+        }
+    }
+
+    // --- Collision Detection ---
+    function checkCollisions() {
+        if (STATE.handHistory.length < 2) return;
+
+        const p1 = STATE.prevHandPos;
+        const p2 = STATE.handPos;
+        
+        // Calculate slice vector
+        const sliceVec = new THREE.Vector3().subVectors(p2, p1);
+        const sliceLen = sliceVec.length();
+
+        // Minimal movement required to slice
+        if (sliceLen < 0.2) return; 
+
+        const ray = new THREE.Ray(p1, sliceVec.clone().normalize());
+
+        fruits.forEach(fruit => {
+            if (!fruit.active) return;
+
+            // Distance from line segment to sphere center
+            const sphereCenter = fruit.mesh.position;
+            
+            // Project sphere center onto the line defined by p1->p2
+            const v1 = new THREE.Vector3().subVectors(sphereCenter, p1);
+            const direction = sliceVec.clone().normalize();
+            const projectionLength = v1.dot(direction);
+            
+            // Check if projection falls within the segment
+            if (projectionLength >= 0 && projectionLength <= sliceLen) {
+                // Closest point on line
+                const closestPoint = new THREE.Vector3().copy(p1).add(direction.multiplyScalar(projectionLength));
+                const distance = closestPoint.distanceTo(sphereCenter);
+                
+                if (distance < fruit.radius) {
+                    fruit.slice(sliceVec.normalize());
+                }
+            }
+        });
+    }
+
+    // --- Game Loop ---
+
+    function startGame() {
+        if (STATE.isPlaying) return;
+        AudioSys.init();
+        STATE.score = 0;
+        STATE.bombsHit = 0;
+        STATE.isPlaying = true;
+        STATE.frameCount = 0;
+        fruits.forEach(f => f.cleanup());
+        fruits = [];
+        particles = [];
+        
+        document.getElementById('start-screen').classList.add('hidden');
+        document.getElementById('game-over-screen').classList.add('hidden');
+        updateUI();
+    }
+
+    function endGame() {
+        STATE.isPlaying = false;
+        document.getElementById('final-score').innerText = STATE.score;
+        document.getElementById('game-over-screen').classList.remove('hidden');
+        AudioSys.gameOver();
+    }
+
+    function updateUI() {
+        document.getElementById('score-val').innerText = STATE.score;
+        document.getElementById('bombs-val').innerText = STATE.bombsHit;
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // Physics Step
+        STATE.frameCount++;
+
+        // Spawn Logic
+        if (STATE.isPlaying && STATE.frameCount % CONFIG.spawnRate === 0) {
+            // Increase difficulty: decrease spawnRate slightly
+            if (CONFIG.spawnRate > 20 && STATE.frameCount % 300 === 0) CONFIG.spawnRate -= 2;
+            
+            // Chance to spawn bomb
+            const isBomb = Math.random() > 0.8; 
+            fruits.push(new GameObject(isBomb));
+        }
+
+        // Update Objects
+        fruits.forEach(f => f.update());
+        fruits = fruits.filter(f => f.active); // Remove inactive from array
+
+        // Update Particles
+        particles.forEach(p => p.update());
+        particles = particles.filter(p => p.active);
+
+        // Hand Logic
+        // Lerp for smoothness
+        STATE.prevHandPos.copy(STATE.handPos);
+        
+        // Note: rawHandPos is updated by MediaPipe callback asynchronously
+        // We apply smoothing here if needed, or just use the raw value
+        // To visualize pointer even if not playing
+        
+        updateTrail();
+
+        if (STATE.isPlaying) {
+            checkCollisions();
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    initTrail();
+    animate();
+
+    // --- MediaPipe Hands Setup ---
+    
+    const videoElement = document.getElementById('video-input');
+    const rawHandPos = new THREE.Vector3(0, -10, 0);
+
+    function onResults(results) {
+        const loadingDiv = document.getElementById('loader');
+        const btnStart = document.getElementById('btn-start');
+        
+        if (loadingDiv && !loadingDiv.classList.contains('hidden')) {
+            loadingDiv.classList.add('hidden');
+            btnStart.classList.remove('hidden');
+        }
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            // Get index finger tip (landmark 8) of the first hand
+            const landmarks = results.multiHandLandmarks[0];
+            const indexTip = landmarks[8];
+
+            // Convert normalized (0-1) to World Coordinates
+            // MediaPipe: X (0=left, 1=right), Y (0=top, 1=bottom)
+            // ThreeJS: X (-w/2, w/2), Y (h/2, -h/2)
+            
+            // Note: Video is mirrored in CSS, but coordinates from MP need handling
+            // Since we CSS mirrored the video element, we perceive left as right.
+            // MP output: x increases left-to-right. 
+            // We need to invert X for intuitive mirroring interaction.
+            
+            const x = (1 - indexTip.x) * widthAtZ - (widthAtZ / 2);
+            const y = (1 - indexTip.y) * heightAtZ - (heightAtZ / 2);
+            
+            // Smoothing (Simple Lerp)
+            const alpha = 0.3; // Higher = faster but jittery
+            STATE.handPos.lerp(new THREE.Vector3(x, y, CONFIG.zPlane), alpha);
+        }
+    }
+
+    const hands = new Hands({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }});
+
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    hands.onResults(onResults);
+
+    const cameraUtils = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: 640,
+        height: 480
+    });
+
+    cameraUtils.start();
+
+    // Event Listeners
+    document.getElementById('btn-start').addEventListener('click', startGame);
+    document.getElementById('btn-restart').addEventListener('click', startGame);
+    
+    // Handle window resize
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+</script>
+</body>
+</html>
